@@ -1,0 +1,118 @@
+---
+- name: Configure OSPF on Juniper devices
+  hosts: all
+  roles:
+    - Juniper.junos
+  connection: local
+  gather_facts: no
+  tasks:
+    - name: Configure interfaces with IP addresses
+      juniper_junos_config:
+        load: merge
+        template: interfaces.conf
+        vars:
+          interfaces: "{{ interfaces }}"
+        provider:
+          host: "{{ ansible_host }}"
+          user: labuser
+          password: Labuser
+
+    - name: Configure OSPF and security zones on all routers
+      juniper_junos_config:
+        load: merge
+        template: ospf_template.conf
+        vars:
+          interfaces: "{{ interfaces }}"
+        provider:
+          host: "{{ ansible_host }}"
+          user: labuser
+          password: Labuser
+    - name: Get route information and save it in a text file
+      juniper_junos_rpc:
+         rpcs:
+         - "get-route-information"
+         formats: text
+         dest: "{{ ansible_host }}-routing-information.txt"
+         provider:
+           host: "{{ ansible_host }}"
+           user: labuser
+           password: Labuser
+
+- name: Configure MPLS on the core routers
+  hosts: srx240_2,srx240_3,srx240_4,srx240_5
+  roles:
+    - Juniper.junos
+  connection: local
+  gather_facts: no
+  tasks: 
+    - name: Configure LDP and MPLS on interfaces
+      juniper_junos_config:
+        load: merge
+        template: mpls_template.conf
+        vars:
+          interfaces: "{{ interfaces }}"
+        provider:
+          host: "{{ ansible_host }}"
+          user: labuser
+          password: Labuser
+    - name: Save LDP neighbors for each router in a text file
+      juniper_junos_rpc:
+        rpcs: 
+        - "get-ldp-neighbor-information"
+        formats: text
+        dest: "{{ ansible_host }}-ldp-neighbors.txt"
+        provider:
+          host: "{{ ansible_host }}"
+          user: labuser
+          password: Labuser
+    - name: Get inet.3 routes
+      juniper_junos_rpc:
+        rpcs: 
+        - "get-route-information"
+        args: 
+          table: "inet.3"
+        formats: text
+        dest: "{{ ansible_host }}-inet3-routes.txt"
+        provider:
+          host: "{{ ansible_host }}"
+          user: labuser
+          password: Labuser
+    - name: Get mpls routes
+      juniper_junos_rpc:
+        rpcs: 
+        - "get-route-information"
+        args: 
+          table: "mpls.0"
+        formats: text
+        dest: "{{ ansible_host }}-mpls-routes.txt"
+        provider:
+          host: "{{ ansible_host }}"
+          user: labuser
+          password: Labuser
+
+
+- name: Test connectivity between two edge IP networks
+  hosts: srx240_1
+  roles:
+    - Juniper.junos
+  connection: local
+  gather_facts: no
+  tasks: 
+    - name: Ping the other edge IP network
+      juniper_junos_rpc:
+         rpcs:
+         - ping
+         kwargs:
+            host: 9.1.1.2
+         provider:
+           host: "{{ ansible_host }}"
+           user: labuser
+           password: Labuser
+      register: result
+    - name: Print ping result
+      debug:
+         var: result
+
+         
+
+

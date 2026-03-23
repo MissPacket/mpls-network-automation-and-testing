@@ -1,0 +1,47 @@
+---
+all:
+  hosts:
+    srx240_1:
+      ansible_host: 192.168.1.29
+      interfaces:
+        - {if_name: "ge-0/0/2", if_addr: "8.1.1.1/30",area: "1"}
+        - {if_name: "lo0", if_addr: "1.1.1.1/24",area: "1"}
+    
+    srx240_2:
+      ansible_host: 192.168.1.30
+      interfaces:
+        - {if_name: "ge-0/0/3", if_addr: "8.1.1.2/30",area: "1"}
+        - {if_name: "ge-0/0/1", if_addr: "7.1.1.1/30",area: "0"}
+        - {if_name: "ge-0/0/2", if_addr: "7.1.1.14/30",area: "0"}
+        - {if_name: "lo0", if_addr: "1.1.1.2/24",area: "0"}
+    
+    srx240_3:
+      ansible_host: 192.168.1.31
+      interfaces:
+        - {if_name: "ge-0/0/1", if_addr: "7.1.1.2/30",area: "0"}
+        - {if_name: "ge-0/0/2", if_addr: "7.1.1.5/30",area: "0"}
+        - {if_name: "lo0", if_addr: "1.1.1.3/24",area: "0"}
+
+    srx240_4:
+      ansible_host: 192.168.1.32
+      interfaces:
+        - {if_name: "ge-0/0/1", if_addr: "7.1.1.6/30",area: "0"}
+        - {if_name: "ge-0/0/2", if_addr: "7.1.1.9/30",area: "0"}
+        - {if_name: "ge-0/0/3", if_addr: "9.1.1.1/30",area: "2"}
+        - {if_name: "lo0", if_addr: "1.1.1.4/24",area: "0"}
+
+    srx240_5:
+      ansible_host: 192.168.1.33
+      interfaces:
+        - {if_name: "ge-0/0/1", if_addr: "7.1.1.10/30",area: "0"}
+        - {if_name: "ge-0/0/2", if_addr: "7.1.1.13/30",area: "0"}
+        - {if_name: "lo0", if_addr: "1.1.1.5/24",area: "0"}
+    
+    srx240_6:
+      ansible_host: 192.168.1.34
+      interfaces:
+        - {if_name: "ge-0/0/2", if_addr: "9.1.1.2/30",area: "2"}
+        - {if_name: "lo0", if_addr: "1.1.1.6/24",area: "2"}
+   
+  vars:
+    ansible_python_interpreter: /usr/bin/python3  
