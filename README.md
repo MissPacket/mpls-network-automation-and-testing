@@ -1,6 +1,6 @@
-# Juniper Network Automation — OSPF & MPLS Configuration with Ansible
+# MPLS Network Automation and Testing
 
-This project automates the configuration of OSPF and MPLS on a Juniper SRX240 lab topology using Ansible and Jinja2 templates. It targets a multi-area OSPF setup with an MPLS core, and includes tasks to validate connectivity and collect routing state.
+This project automates the configuration of MPLS on a Juniper SRX240 lab topology using Ansible and Jinja2 templates. It targets a multi-area OSPF setup with an MPLS core, and includes tasks to validate connectivity and collect routing state.
 
 ---
 
