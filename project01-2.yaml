@@ -1,0 +1,304 @@
+---
+# =============================================================================
+# MPLS L3VPN Automated Deployment
+#
+# Routing design:
+#   IGP  : OSPF area 0 — MPLS core only (PE + P routers)
+#   LDP  : label distribution on all core interfaces + loopbacks
+#   iBGP : MP-BGP between PE1 (1.1.1.2) and PE2 (1.1.1.4), inet-vpn unicast
+#   eBGP : PE-CE sessions inside each VRF (PE as AS 65000, CE1 AS 65001, CE2 AS 65002)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Play 1: Configure interfaces — ALL routers
+# -----------------------------------------------------------------------------
+- name: Configure interfaces on all routers
+  hosts: all
+  roles:
+    - Juniper.junos
+  connection: local
+  gather_facts: no
+  tasks:
+    - name: Push IP addressing on all interfaces
+      juniper_junos_config:
+        load: merge
+        template: interfaces.conf
+        vars:
+          interfaces: "{{ interfaces }}"
+        provider:
+          host: "{{ ansible_host }}"
+          user: labuser
+          password: Labuser
+
+# -----------------------------------------------------------------------------
+# Play 2: Configure OSPF — MPLS core only (PE + P)
+# OSPF runs only on core-type and loopback interfaces.
+# CE-facing interfaces are intentionally excluded.
+# -----------------------------------------------------------------------------
+- name: Configure OSPF on MPLS core routers
+  hosts: mpls_core
+  roles:
+    - Juniper.junos
+  connection: local
+  gather_facts: no
+  tasks:
+    - name: Push OSPF area 0 and security zones
+      juniper_junos_config:
+        load: merge
+        template: ospf_template.conf
+        vars:
+          interfaces: "{{ interfaces }}"
+          router_id: "{{ router_id }}"
+        provider:
+          host: "{{ ansible_host }}"
+          user: labuser
+          password: Labuser
+
+# -----------------------------------------------------------------------------
+# Play 3: Configure MPLS + LDP — MPLS core only (PE + P)
+# -----------------------------------------------------------------------------
+- name: Configure MPLS and LDP on core routers
+  hosts: mpls_core
+  roles:
+    - Juniper.junos
+  connection: local
+  gather_facts: no
+  tasks:
+    - name: Push MPLS family and LDP on core interfaces
+      juniper_junos_config:
+        load: merge
+        template: mpls_template.conf
+        vars:
+          interfaces: "{{ interfaces }}"
+        provider:
+          host: "{{ ansible_host }}"
+          user: labuser
+          password: Labuser
+
+# -----------------------------------------------------------------------------
+# Play 4: Configure MP-BGP iBGP — PE routers only
+# Peers via loopbacks; inet-vpn unicast address family for VPN route exchange.
+# -----------------------------------------------------------------------------
+- name: Configure MP-BGP iBGP on PE routers
+  hosts: pe_routers
+  roles:
+    - Juniper.junos
+  connection: local
+  gather_facts: no
+  tasks:
+    - name: Push iBGP config with inet-vpn family
+      juniper_junos_config:
+        load: merge
+        template: bgp_template.conf
+        vars:
+          router_id: "{{ router_id }}"
+          bgp_as: "{{ bgp_as }}"
+          ibgp_neighbors: "{{ ibgp_neighbors }}"
+        provider:
+          host: "{{ ansible_host }}"
+          user: labuser
+          password: Labuser
+
+# -----------------------------------------------------------------------------
+# Play 5: Configure VRFs + eBGP PE-CE — PE routers only
+# Each VRF gets a BGP group for its CE neighbor (eBGP inside the VRF).
+# -----------------------------------------------------------------------------
+- name: Configure VRF instances and PE-CE eBGP on PE routers
+  hosts: pe_routers
+  roles:
+    - Juniper.junos
+  connection: local
+  gather_facts: no
+  tasks:
+    - name: Push VRF routing-instance with eBGP CE neighbor
+      juniper_junos_config:
+        load: merge
+        template: vrf_template.conf
+        vars:
+          vrfs: "{{ vrfs }}"
+        provider:
+          host: "{{ ansible_host }}"
+          user: labuser
+          password: Labuser
+
+# -----------------------------------------------------------------------------
+# Play 6: Configure CE eBGP — CE routers only
+# Simple external BGP toward the attached PE.
+# -----------------------------------------------------------------------------
+- name: Configure eBGP on CE routers
+  hosts: ce_routers
+  roles:
+    - Juniper.junos
+  connection: local
+  gather_facts: no
+  tasks:
+    - name: Push CE eBGP config toward PE
+      juniper_junos_config:
+        load: merge
+        template: ce_bgp_template.conf
+        vars:
+          router_id: "{{ router_id }}"
+          bgp_as: "{{ bgp_as }}"
+          bgp_neighbors: "{{ bgp_neighbors }}"
+        provider:
+          host: "{{ ansible_host }}"
+          user: labuser
+          password: Labuser
+
+# -----------------------------------------------------------------------------
+# Play 7: Collect MPLS core state
+# -----------------------------------------------------------------------------
+- name: Collect OSPF, LDP, and MPLS state from core routers
+  hosts: mpls_core
+  roles:
+    - Juniper.junos
+  connection: local
+  gather_facts: no
+  tasks:
+    - name: Save full routing table
+      juniper_junos_rpc:
+        rpcs:
+        - "get-route-information"
+        formats: text
+        dest: "{{ ansible_host }}-routing-information.txt"
+        provider:
+          host: "{{ ansible_host }}"
+          user: labuser
+          password: Labuser
+
+    - name: Save LDP neighbor state
+      juniper_junos_rpc:
+        rpcs:
+        - "get-ldp-neighbor-information"
+        formats: text
+        dest: "{{ ansible_host }}-ldp-neighbors.txt"
+        provider:
+          host: "{{ ansible_host }}"
+          user: labuser
+          password: Labuser
+
+    - name: Save inet.3 LDP LSP routes
+      juniper_junos_rpc:
+        rpcs:
+        - "get-route-information"
+        args:
+          table: "inet.3"
+        formats: text
+        dest: "{{ ansible_host }}-inet3-routes.txt"
+        provider:
+          host: "{{ ansible_host }}"
+          user: labuser
+          password: Labuser
+
+    - name: Save mpls.0 forwarding table
+      juniper_junos_rpc:
+        rpcs:
+        - "get-route-information"
+        args:
+          table: "mpls.0"
+        formats: text
+        dest: "{{ ansible_host }}-mpls-routes.txt"
+        provider:
+          host: "{{ ansible_host }}"
+          user: labuser
+          password: Labuser
+
+# -----------------------------------------------------------------------------
+# Play 8: Collect BGP and VRF state from PE routers
+# -----------------------------------------------------------------------------
+- name: Collect BGP and VRF state from PE routers
+  hosts: pe_routers
+  roles:
+    - Juniper.junos
+  connection: local
+  gather_facts: no
+  tasks:
+    - name: Save MP-BGP neighbor summary
+      juniper_junos_rpc:
+        rpcs:
+        - "get-bgp-neighbor-information"
+        formats: text
+        dest: "{{ ansible_host }}-bgp-neighbors.txt"
+        provider:
+          host: "{{ ansible_host }}"
+          user: labuser
+          password: Labuser
+
+    - name: Save bgp.l3vpn.0 VPN routes
+      juniper_junos_rpc:
+        rpcs:
+        - "get-route-information"
+        args:
+          table: "bgp.l3vpn.0"
+        formats: text
+        dest: "{{ ansible_host }}-l3vpn-routes.txt"
+        provider:
+          host: "{{ ansible_host }}"
+          user: labuser
+          password: Labuser
+
+    - name: Save CUSTOMER_A VRF routing table
+      juniper_junos_rpc:
+        rpcs:
+        - "get-route-information"
+        args:
+          table: "CUSTOMER_A.inet.0"
+        formats: text
+        dest: "{{ ansible_host }}-customer-a-vrf-routes.txt"
+        provider:
+          host: "{{ ansible_host }}"
+          user: labuser
+          password: Labuser
+
+# -----------------------------------------------------------------------------
+# Play 9: Connectivity validation
+# VRF ping from PE1 to CE2 loopback, then CE1 to CE2 end-to-end.
+# -----------------------------------------------------------------------------
+- name: Validate L3VPN reachability from PE1
+  hosts: srx240_2
+  roles:
+    - Juniper.junos
+  connection: local
+  gather_facts: no
+  tasks:
+    - name: Ping CE2 loopback through CUSTOMER_A VRF
+      juniper_junos_rpc:
+        rpcs:
+        - ping
+        kwargs:
+          host: "1.1.1.6"
+          routing-instance: "CUSTOMER_A"
+          count: "5"
+        provider:
+          host: "{{ ansible_host }}"
+          user: labuser
+          password: Labuser
+      register: vrf_ping
+
+    - name: Print VRF ping result
+      debug:
+        var: vrf_ping
+
+- name: Test CE1 to CE2 end-to-end reachability
+  hosts: srx240_1
+  roles:
+    - Juniper.junos
+  connection: local
+  gather_facts: no
+  tasks:
+    - name: Ping CE2 PE-facing IP (9.1.1.2) from CE1
+      juniper_junos_rpc:
+        rpcs:
+        - ping
+        kwargs:
+          host: "9.1.1.2"
+          count: "5"
+        provider:
+          host: "{{ ansible_host }}"
+          user: labuser
+          password: Labuser
+      register: ce_ping
+
+    - name: Print CE-to-CE ping result
+      debug:
+        var: ce_ping

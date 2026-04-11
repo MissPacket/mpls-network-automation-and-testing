@@ -1,27 +1,46 @@
-# MPLS Network Automation and Testing
+# MPLS L3VPN Network Automation
 
-This project automates the configuration of MPLS on a Juniper SRX240 lab topology using Ansible and Jinja2 templates. It targets a multi-area OSPF setup with an MPLS core, and includes tasks to validate connectivity and collect routing state.
+This project automates deployment of a full **BGP-based MPLS L3VPN** on a Juniper SRX240 lab topology using Ansible and Jinja2 templates.
 
 ---
 
-## Topology Overview
+## Routing Design
 
-The lab consists of 6 Juniper SRX240 routers arranged across three OSPF areas with an MPLS-enabled core:
+| Plane | Protocol | Scope | Purpose |
+|-------|----------|-------|---------|
+| IGP | OSPF area 0 | PE + P routers only | Distributes loopback reachability so iBGP sessions can form |
+| Label distribution | LDP | PE + P routers | Builds transport LSPs across the core |
+| PE-PE | MP-BGP iBGP (inet-vpn) | PE1 ↔ PE2 via loopbacks | Exchanges VPN routes between PEs |
+| PE-CE | eBGP (inside VRF) | PE ↔ CE per customer | Distributes customer prefixes into the VRF |
+
+CE routers run no OSPF and have no MPLS awareness — they only speak eBGP toward their attached PE.
+
+---
+
+## Topology
 
 ```
-[srx240_1] --- area 1 --- [srx240_2] --- area 0 (MPLS core) --- [srx240_4] --- area 2 --- [srx240_6]
-                                  \                              /
-                               [srx240_3] -- [srx240_5]
+[CE1: srx240_1]                                              [CE2: srx240_6]
+  AS 65001                                                     AS 65002
+     |  eBGP (8.1.1.0/30)                  eBGP (9.1.1.0/30)  |
+[PE1: srx240_2] ======== MPLS core (OSPF area 0) ======= [PE2: srx240_4]
+  AS 65000                /                    \               AS 65000
+              [P: srx240_3]          [P: srx240_5]
+              
+              <-------- iBGP MP-BGP (inet-vpn) -------->
+                         PE1 lo 1.1.1.2 ↔ PE2 lo 1.1.1.4
 ```
 
-| Router    | Management IP   | Role              | OSPF Areas  |
-|-----------|-----------------|-------------------|-------------|
-| srx240_1  | 192.168.1.29    | Edge (Area 1)     | Area 1      |
-| srx240_2  | 192.168.1.30    | ABR / MPLS core   | Area 0, 1   |
-| srx240_3  | 192.168.1.31    | MPLS core         | Area 0      |
-| srx240_4  | 192.168.1.32    | ABR / MPLS core   | Area 0, 2   |
-| srx240_5  | 192.168.1.33    | MPLS core         | Area 0      |
-| srx240_6  | 192.168.1.34    | Edge (Area 2)     | Area 2      |
+| Router    | Mgmt IP       | Role | AS    | OSPF | VRF |
+|-----------|---------------|------|-------|------|-----|
+| srx240_1  | 192.168.1.29  | CE   | 65001 | —    | —   |
+| srx240_2  | 192.168.1.30  | PE   | 65000 | area 0 | CUSTOMER_A |
+| srx240_3  | 192.168.1.31  | P    | —     | area 0 | — |
+| srx240_4  | 192.168.1.32  | PE   | 65000 | area 0 | CUSTOMER_A |
+| srx240_5  | 192.168.1.33  | P    | —     | area 0 | — |
+| srx240_6  | 192.168.1.34  | CE   | 65002 | —    | —   |
+
+**Customer A VRF:** RD `65000:100` | RT import/export `65000:100`
 
 ---
 
@@ -29,43 +48,15 @@ The lab consists of 6 Juniper SRX240 routers arranged across three OSPF areas wi
 
 ```
 .
-├── inventory.yaml          # Host inventory with interface/IP/area definitions
-├── project01.yaml          # Main Ansible playbook
-├── interfaces.conf         # Jinja2 template — interface IP addressing
-├── ospf_template.conf      # Jinja2 template — OSPF + security zones
-└── mpls_template.conf      # Jinja2 template — LDP and MPLS on core interfaces
+├── inventory.yaml          # Hosts, interfaces, VRF, and BGP definitions
+├── project01.yaml          # Main Ansible playbook (9 plays)
+├── interfaces.conf         # Jinja2 — IP addressing (all routers)
+├── ospf_template.conf      # Jinja2 — OSPF area 0 + security zones (PE + P only)
+├── mpls_template.conf      # Jinja2 — LDP + MPLS on core interfaces (PE + P)
+├── bgp_template.conf       # Jinja2 — MP-BGP iBGP with inet-vpn family (PE only)
+├── vrf_template.conf       # Jinja2 — VRF instance + eBGP CE neighbor (PE only)
+└── ce_bgp_template.conf    # Jinja2 — eBGP toward PE (CE only)
 ```
-
----
-
-## Prerequisites
-
-- Ansible with the [`Juniper.junos`](https://github.com/Juniper/ansible-junos-stdlib) role installed
-- Python 3 (`/usr/bin/python3`) on the control node
-- SSH/NETCONF access to all routers (credentials: `labuser` / `Labuser`)
-- All routers reachable on their management IPs
-
-Install the Juniper Ansible role:
-```bash
-ansible-galaxy install Juniper.junos
-```
-
----
-
-## Configuration Templates
-
-### `interfaces.conf`
-Configures IPv4 addresses on all interfaces for every router using values from the inventory.
-
-### `ospf_template.conf`
-- Configures OSPF per interface, assigning each to its defined area
-- Sets `lo0` as a passive interface
-- Adds all interfaces to the `trust` security zone with full `host-inbound-traffic` permissions
-
-### `mpls_template.conf`
-- Enables `family mpls` on `ge-0/0/1` and `ge-0/0/2` (core-facing interfaces)
-- Configures LDP on `ge-0/0/1`, `ge-0/0/2`, and `lo0`
-- Applied only to the MPLS core routers: `srx240_2` through `srx240_5`
 
 ---
 
@@ -75,60 +66,52 @@ Configures IPv4 addresses on all interfaces for every router using values from t
 ansible-playbook -i inventory.yaml project01.yaml
 ```
 
-### What the playbook does
+### Playbook Summary (9 plays)
 
-**Play 1 — All routers:**
-1. Pushes interface IP addressing from `interfaces.conf`
-2. Pushes OSPF configuration and security zones from `ospf_template.conf`
-3. Saves routing table output to `<hostname>-routing-information.txt`
-
-**Play 2 — MPLS core routers (`srx240_2`–`srx240_5`) only:**
-1. Pushes LDP and MPLS interface config from `mpls_template.conf`
-2. Saves LDP neighbor state to `<hostname>-ldp-neighbors.txt`
-3. Saves `inet.3` routes to `<hostname>-inet3-routes.txt`
-4. Saves `mpls.0` routes to `<hostname>-mpls-routes.txt`
-
-**Play 3 — Connectivity test from `srx240_1`:**
-1. Pings `9.1.1.2` (the edge interface on `srx240_6`) to validate end-to-end reachability across the MPLS core
-2. Prints the ping result to stdout
+| Play | Hosts | What it does |
+|------|-------|--------------|
+| 1 | all | Interface IP addressing |
+| 2 | mpls_core | OSPF area 0 on core + loopback interfaces only |
+| 3 | mpls_core | MPLS family + LDP on core interfaces |
+| 4 | pe_routers | MP-BGP iBGP (inet-vpn unicast) between PE1 and PE2 |
+| 5 | pe_routers | VRF routing-instance + eBGP CE neighbor inside VRF |
+| 6 | ce_routers | eBGP toward attached PE |
+| 7 | mpls_core | Collect routing, LDP, inet.3, mpls.0 state |
+| 8 | pe_routers | Collect BGP, bgp.l3vpn.0, CUSTOMER_A.inet.0 state |
+| 9 | srx240_2 + srx240_1 | VRF ping (PE1→CE2 lo) + CE1→CE2 end-to-end ping |
 
 ---
 
 ## Output Files
 
-After a successful run, the following files are generated in the playbook directory:
-
-| File | Description |
-|------|-------------|
-| `<host>-routing-information.txt` | Full routing table (all routers) |
-| `<host>-ldp-neighbors.txt` | LDP neighbor adjacencies (core only) |
-| `<host>-inet3-routes.txt` | MPLS label-switched paths via inet.3 (core only) |
-| `<host>-mpls-routes.txt` | MPLS forwarding table mpls.0 (core only) |
+| File | Source |
+|------|--------|
+| `<host>-routing-information.txt` | Full routing table (core) |
+| `<host>-ldp-neighbors.txt` | LDP adjacencies (core) |
+| `<host>-inet3-routes.txt` | LDP LSPs in inet.3 (core) |
+| `<host>-mpls-routes.txt` | MPLS forwarding table mpls.0 (core) |
+| `<host>-bgp-neighbors.txt` | MP-BGP neighbor state (PE) |
+| `<host>-l3vpn-routes.txt` | bgp.l3vpn.0 VPN routes (PE) |
+| `<host>-customer-a-vrf-routes.txt` | CUSTOMER_A.inet.0 VRF table (PE) |
 
 ---
 
-## Inventory Structure
+## L3VPN Data Plane
 
-Interfaces are defined per host in `inventory.yaml` using a list of dictionaries:
-
-```yaml
-srx240_3:
-  ansible_host: 192.168.1.31
-  interfaces:
-    - {if_name: "ge-0/0/1", if_addr: "7.1.1.2/30", area: "0"}
-    - {if_name: "ge-0/0/2", if_addr: "7.1.1.5/30", area: "0"}
-    - {if_name: "lo0",      if_addr: "1.1.1.3/24",  area: "0"}
 ```
-
-Each entry requires:
-- `if_name` — Junos interface name
-- `if_addr` — IP address with prefix length
-- `area` — OSPF area number
+CE1 sends packet → PE1 (ge-0/0/3, VRF CUSTOMER_A)
+  PE1 looks up CUSTOMER_A.inet.0, finds next-hop = PE2 loopback
+  PE1 pushes VPN label (from bgp.l3vpn.0) + LDP transport label (from inet.3)
+  P routers swap transport label across the core
+  PE2 pops transport label (PHP or explicit-null), then pops VPN label
+  PE2 looks up CUSTOMER_A.inet.0, forwards out ge-0/0/3 to CE2
+```
 
 ---
 
 ## Notes
 
-- All configurations are pushed using `load: merge`, so existing config outside the managed stanzas is preserved.
-- MPLS is only enabled on interfaces named `ge-0/0/1` or `ge-0/0/2` — the template filters by interface name.
-- The loopback (`lo0`) is included in LDP but not in the MPLS interface list, which is standard practice for LDP router-ID advertisement.
+- OSPF is scoped strictly to `type: core` and `type: loopback` interfaces in the inventory — the PE-CE interface (`ge-0/0/3`) is intentionally excluded from OSPF to keep customer routing isolated.
+- PE-CE eBGP sessions live **inside the VRF** (`routing-instances { CUSTOMER_A { protocols { bgp } } }`), not in the global routing table.
+- `vrf-table-label` allocates a per-VRF label for packets arriving from the core, enabling correct VRF lookup on the egress PE.
+- To add a second customer, add a new VRF block with a distinct RD/RT (e.g. `65000:200`) and a new CE AS, then assign its PE-facing interface.
